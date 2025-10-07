@@ -148,6 +148,167 @@
     .btn:active {
       background: #edeff1;
     }
+    
+    .settings-section {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #d0d7de;
+    }
+    
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      padding: 8px 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #24292f;
+    }
+    
+    .settings-header:hover {
+      color: #0969da;
+    }
+    
+    .settings-arrow {
+      transition: transform 0.2s;
+    }
+    
+    .settings-arrow.expanded {
+      transform: rotate(90deg);
+    }
+    
+    .settings-content {
+      display: none;
+      margin-top: 8px;
+    }
+    
+    .settings-content.expanded {
+      display: block;
+    }
+    
+    .form-group {
+      margin-bottom: 12px;
+    }
+    
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: #24292f;
+      margin-bottom: 4px;
+    }
+    
+    .form-input {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 12px;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    
+    .form-input:focus {
+      outline: 2px solid #0969da;
+      outline-offset: -1px;
+    }
+    
+    .form-help {
+      font-size: 11px;
+      color: #57606a;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    
+    .form-help a {
+      color: #0969da;
+      text-decoration: none;
+    }
+    
+    .form-help a:hover {
+      text-decoration: underline;
+    }
+    
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .btn-small {
+      flex: 1;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      background: white;
+      color: #24292f;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .btn-small:hover {
+      background: #f6f8fa;
+    }
+    
+    .btn-small.btn-primary {
+      background: #2ea44f;
+      border-color: #2ea44f;
+      color: white;
+    }
+    
+    .btn-small.btn-primary:hover {
+      background: #2c974b;
+    }
+    
+    .btn-small.btn-danger {
+      background: #cf222e;
+      border-color: #cf222e;
+      color: white;
+    }
+    
+    .btn-small.btn-danger:hover {
+      background: #a40e26;
+    }
+    
+    .rate-limit-info {
+      background: #f6f8fa;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 11px;
+      margin-top: 8px;
+    }
+    
+    .rate-limit-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    
+    .rate-limit-row:last-child {
+      margin-bottom: 0;
+    }
+    
+    .rate-limit-label {
+      color: #57606a;
+    }
+    
+    .rate-limit-value {
+      font-weight: 600;
+      color: #24292f;
+    }
+    
+    .rate-limit-value.auth-yes {
+      color: #1a7f37;
+    }
+    
+    .rate-limit-value.auth-no {
+      color: #cf222e;
+    }
+    
+    .rate-limit-value.warning {
+      color: #bf8700;
+    }
   </style>
 </head>
 <body>
@@ -171,7 +332,55 @@
   </div>
   
   <div class="actions">
-    <button class="btn" id="clearCache">Clear Cache</button>
+    <button class="btn" id="refreshNames">Refresh All Names</button>
+  </div>
+  
+  <div class="settings-section">
+    <div class="settings-header" id="settingsHeader">
+      <span>⚙️ Settings</span>
+      <span class="settings-arrow">▶</span>
+    </div>
+    <div class="settings-content" id="settingsContent">
+      <div class="form-group">
+        <label class="form-label" for="tokenInput">GitHub Personal Access Token</label>
+        <input 
+          type="password" 
+          id="tokenInput" 
+          class="form-input" 
+          placeholder="ghp_••••••••••••••••••••"
+          autocomplete="off"
+        >
+        <div class="form-help">
+          Create a <strong>classic token</strong> with <strong>no permissions</strong> (just for higher rate limit).
+          <a href="https://github.com/settings/tokens/new?description=GitHub%20Real%20Names%20Extension&scopes=" target="_blank">Create token</a>
+          (select "No expiration")
+        </div>
+      </div>
+      
+      <div class="btn-group">
+        <button class="btn-small btn-primary" id="saveToken">Save</button>
+        <button class="btn-small btn-danger" id="removeToken">Remove</button>
+      </div>
+      
+      <div class="rate-limit-info" id="rateLimitInfo">
+        <div class="rate-limit-row">
+          <span class="rate-limit-label">Authenticated:</span>
+          <span class="rate-limit-value" id="authStatus">Loading...</span>
+        </div>
+        <div class="rate-limit-row">
+          <span class="rate-limit-label">Rate Limit:</span>
+          <span class="rate-limit-value" id="rateLimit">Loading...</span>
+        </div>
+        <div class="rate-limit-row">
+          <span class="rate-limit-label">Remaining:</span>
+          <span class="rate-limit-value" id="remaining">Loading...</span>
+        </div>
+        <div class="rate-limit-row">
+          <span class="rate-limit-label">Resets:</span>
+          <span class="rate-limit-value" id="resetTime">Loading...</span>
+        </div>
+      </div>
+    </div>
   </div>
   
   <script src="popup.js"></script>

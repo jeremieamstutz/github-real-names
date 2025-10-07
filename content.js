@@ -214,11 +214,48 @@ async function fetchRealName(username) {
   }
   
   try {
-    const response = await fetch(`https://api.github.com/users/${username}`);
+    // Get token from storage if available
+    const { githubToken } = await chrome.storage.local.get('githubToken');
+    
+    // Build headers
+    const headers = {
+      'Accept': 'application/vnd.github.v3+json',
+    };
+    
+    if (githubToken) {
+      // Use correct auth format based on token type
+      // Classic tokens (ghp_): use "token" prefix
+      // Fine-grained tokens (github_pat_): use "Bearer" prefix
+      if (githubToken.startsWith('github_pat_')) {
+        headers['Authorization'] = `Bearer ${githubToken}`;
+      } else {
+        headers['Authorization'] = `token ${githubToken}`;
+      }
+    }
+    
+    const response = await fetch(`https://api.github.com/users/${username}`, { headers });
+    
+    // Track rate limit info from response headers
+    const rateLimitLimit = response.headers.get('X-RateLimit-Limit');
+    const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
+    const rateLimitReset = response.headers.get('X-RateLimit-Reset');
+    
+    if (rateLimitLimit && rateLimitRemaining && rateLimitReset) {
+      await chrome.storage.local.set({
+        rateLimitData: {
+          limit: parseInt(rateLimitLimit, 10),
+          remaining: parseInt(rateLimitRemaining, 10),
+          reset: parseInt(rateLimitReset, 10),
+        }
+      });
+    }
     
     if (!response.ok) {
       if (response.status === 403 || response.status === 429) {
-        console.warn(`[GitHub Real Names] Rate limited. Consider adding a GitHub token.`);
+        const hasToken = !!githubToken;
+        console.warn(`[GitHub Real Names] Rate limited. ${hasToken ? 'Token may be invalid or expired.' : 'Consider adding a GitHub token.'}`);
+      } else if (response.status === 401) {
+        console.warn(`[GitHub Real Names] Authentication failed. Token may be invalid.`);
       }
       // Cache the username itself to avoid repeated failures
       nameCache.set(username, username);
@@ -420,6 +457,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
   } else if (message.action === 'getState') {
     sendResponse({ enabled: isEnabled });
+  } else if (message.action === 'refreshCache') {
+    console.log(`[GitHub Real Names] Refreshing cache and re-fetching all names`);
+    // Clear in-memory name cache to force re-fetch
+    nameCache.clear();
+    // Clear processed elements to re-process everything
+    processedElements = new WeakSet();
+    // Re-process the page
+    processPage();
+    sendResponse({ success: true });
   }
   return true;
 });
