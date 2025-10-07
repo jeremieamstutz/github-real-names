@@ -51,8 +51,11 @@ function extractUsername(element) {
   // Check for href attribute
   const href = element.getAttribute('href');
   if (href) {
-    // Check for author query parameter first (e.g., /org/repo/commits?author=username)
-    const authorMatch = href.match(/[?&]author=([^&]+)/);
+    // Decode the URL to handle encoded characters
+    const decodedHref = decodeURIComponent(href);
+    
+    // Check for author in query (supports both author=username and author:username)
+    const authorMatch = decodedHref.match(/author[=:]([^+&\s]+)/);
     if (authorMatch && authorMatch[1]) {
       return authorMatch[1];
     }
