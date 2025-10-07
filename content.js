@@ -4,8 +4,7 @@
 const MAX_USERNAME_LENGTH = 39; // GitHub's username length limit
 const BATCH_SIZE = 50;
 const DEBOUNCE_DELAY = 100;
-const IDLE_TIMEOUT = 2000;
-const INITIAL_DELAY = 100;
+const INITIAL_DELAY = 0; // Process immediately after cache is loaded
 
 const EXCLUDED_PATHS = new Set([
   'orgs', 'organizations', 'packages', 'projects', 'teams',
@@ -21,7 +20,7 @@ const NAVIGATION_PATTERNS = /^(open|view|edit|delete|close|save|cancel|submit|pa
 // State management
 let isEnabled = true;
 const nameCache = new Map();
-const processedElements = new WeakSet();
+let processedElements = new WeakSet();
 
 // Selectors for different types of username elements on GitHub
 // Note: We filter out elements with images in extractUsername()
@@ -311,23 +310,28 @@ async function updateElement(element) {
     return;
   }
   
-  // Get real name from cache or fetch it
+  // Get real name from memory cache first (instant for pre-loaded values)
   let realName = nameCache.get(username);
   
-  if (!realName) {
+  if (realName) {
+    // Cache hit - update immediately (no delay)
+    updateElementDisplay(element, username, realName);
+  } else {
+    // Cache miss - show username temporarily, then fetch
+    updateElementDisplay(element, username, username);
+    
     // Check persistent storage first
     const stored = await chrome.storage.local.get(username);
     if (stored[username]?.name) {
       realName = stored[username].name;
       nameCache.set(username, realName);
+      updateElementDisplay(element, username, realName);
     } else {
       // Fetch from API
       realName = await fetchRealName(username);
+      updateElementDisplay(element, username, realName);
     }
   }
-  
-  // Update the display
-  updateElementDisplay(element, username, realName);
 }
 
 // Update the visual display of an element
@@ -435,20 +439,53 @@ function setupObserver() {
   return observer;
 }
 
+// Pre-load cache from storage into memory for instant lookups
+async function preloadCache() {
+  try {
+    const items = await chrome.storage.local.get(null);
+    const protectedKeys = new Set(['enabled', 'githubToken', 'rateLimitData']);
+    
+    for (const key in items) {
+      if (!protectedKeys.has(key) && items[key]?.name) {
+        nameCache.set(key, items[key].name);
+      }
+    }
+    
+    console.log(`[GitHub Real Names] Pre-loaded ${nameCache.size} cached names into memory`);
+  } catch (error) {
+    console.error('[GitHub Real Names] Error pre-loading cache:', error);
+  }
+}
+
 // Initialize the extension
 async function init() {
   // Load enabled state from storage
   const { enabled = true } = await chrome.storage.local.get('enabled');
   isEnabled = enabled;
   
-  // Set up observer for dynamic content immediately
-  setupObserver();
+  // Pre-load all cached names into memory for instant updates
+  await preloadCache();
   
-  // Process initial page content after a short delay to not block page load
-  if ('requestIdleCallback' in window) {
-    requestIdleCallback(() => processPage(), { timeout: IDLE_TIMEOUT });
-  } else {
+  // Wait for body to exist before setting up observer
+  const startProcessing = () => {
+    // Set up observer for dynamic content
+    setupObserver();
+    
+    // Process page immediately (cache is already loaded)
     setTimeout(() => processPage(), INITIAL_DELAY);
+  };
+  
+  if (document.body) {
+    startProcessing();
+  } else {
+    // Wait for body to be available
+    const bodyObserver = new MutationObserver(() => {
+      if (document.body) {
+        bodyObserver.disconnect();
+        startProcessing();
+      }
+    });
+    bodyObserver.observe(document.documentElement, { childList: true });
   }
   
   console.log('[GitHub Real Names] Extension initialized');
@@ -476,12 +513,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Start the extension
+// Start the extension immediately to pre-load cache ASAP
 console.log('[GitHub Real Names] Content script loaded');
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+init();
 
