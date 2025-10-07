@@ -29,11 +29,19 @@ const USERNAME_SELECTORS = [
   'a.Link--primary[href^="/"][href*="/commits?author="]',
   '.TimelineItem .commit-author',
   
+  // Review requests and mentions in timeline
+  '.TimelineItem a.Link--primary:not(:has(img)):not(:has(svg))',
+  '.TimelineItem a.Link--secondary:not(:has(img)):not(:has(svg))',
+  '.TimelineItem a.author:not(:has(img)):not(:has(svg))',
+  
   // Specific text-only username links
   'a[data-hovercard-type="user"]:not(:has(img)):not(:has(svg))',
   'a[data-hovercard-url*="/users/"]:not(:has(img)):not(:has(svg))',
   '.TimelineItem-body a[data-hovercard-type="user"]:not(:has(img)):not(:has(svg))',
   '.BorderGrid-cell a[data-hovercard-type="user"]:not(:has(img)):not(:has(svg))',
+  
+  // Simple profile links (e.g., /username) - filtered by extractUsername to avoid false positives
+  'a[href^="/"]:not(:has(img)):not(:has(svg))',
 ].join(', ');
 
 // Extract username from various element types
@@ -52,25 +60,31 @@ function extractUsername(element) {
   // Special case: Timeline items (commits in PRs, etc.)
   const timelineItem = element.closest('.TimelineItem');
   if (timelineItem) {
-    // Find the username from the avatar in this timeline item
-    const avatarLink = timelineItem.querySelector('a[data-hovercard-type="user"]');
-    if (avatarLink) {
-      const avatarHref = avatarLink.getAttribute('href');
-      if (avatarHref) {
-        const match = avatarHref.match(/^\/([^\/\?#]+)$/);
-        if (match && match[1]) {
-          const username = match[1];
-          
-          // If the element's text matches the username, transform it
-          if (text.toLowerCase() === username.toLowerCase()) {
-            return username;
+    const href = element.getAttribute('href');
+    
+    // Skip commit messages (these point to commit SHAs)
+    if (href && (href.includes('/commit/') || href.includes('/commits/') || /\/[a-f0-9]{40}/.test(href))) {
+      return null;
+    }
+    
+    // For commit authors, try to match against the avatar
+    if (element.classList.contains('commit-author')) {
+      const avatarLink = timelineItem.querySelector('a[data-hovercard-type="user"]');
+      if (avatarLink) {
+        const avatarHref = avatarLink.getAttribute('href');
+        if (avatarHref) {
+          const match = avatarHref.match(/^\/([^\/\?#]+)$/);
+          if (match && match[1]) {
+            const username = match[1];
+            if (text.toLowerCase() === username.toLowerCase()) {
+              return username;
+            }
           }
         }
       }
     }
     
-    // Skip any other links in TimelineItem (commit messages, etc.)
-    return null;
+    // For other links (review requests, etc.), continue with normal processing
   }
   
   // Check for href attribute
