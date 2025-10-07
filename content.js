@@ -57,10 +57,48 @@ function extractUsername(element) {
     return null;
   }
   
+  // Early check: Skip obvious non-user paths
+  const href = element.getAttribute('href');
+  if (href) {
+    // Skip organization, packages, and other system paths
+    if (href.startsWith('/orgs/') || 
+        href.startsWith('/organizations/') ||
+        href.includes('/packages') ||
+        href.includes('/projects') ||
+        href.includes('/teams')) {
+      return null;
+    }
+  }
+  
+  // Skip buttons and button-like links
+  if (element.tagName === 'BUTTON' || 
+      element.getAttribute('role') === 'button' ||
+      element.classList.contains('btn') ||
+      element.classList.contains('Button') ||
+      element.closest('button')) {
+    return null;
+  }
+  
+  // Skip if text is too long to be a username (GitHub usernames max 39 chars)
+  if (text.length > 40) {
+    return null;
+  }
+  
+  // Skip common button/navigation text patterns (with or without trailing space/text)
+  const buttonPatterns = /^(open|view|edit|delete|close|save|cancel|submit|packages|settings|notifications|explore|search|issues|pull requests|discussions|actions|projects|wiki|security|insights|new|create|fork|star|watch|code|commit|branch|tag|release)($|\s)/i;
+  if (buttonPatterns.test(text)) {
+    return null;
+  }
+  
+  // Skip if text contains numbers and spaces (like "Packages 0")
+  if (/\s\d+$/.test(text)) {
+    return null;
+  }
+  
   // Special case: Timeline items (commits in PRs, etc.)
   const timelineItem = element.closest('.TimelineItem');
   if (timelineItem) {
-    const href = element.getAttribute('href');
+    // href already declared above
     
     // Skip commit messages (these point to commit SHAs)
     if (href && (href.includes('/commit/') || href.includes('/commits/') || /\/[a-f0-9]{40}/.test(href))) {
@@ -87,8 +125,7 @@ function extractUsername(element) {
     // For other links (review requests, etc.), continue with normal processing
   }
   
-  // Check for href attribute
-  const href = element.getAttribute('href');
+  // Check for href attribute (already declared above)
   if (href) {
     // Skip commit SHAs and other non-user URLs
     if (href.includes('/commit/') || href.includes('/commits/') || /\/[a-f0-9]{40}$/.test(href)) {
@@ -101,7 +138,11 @@ function extractUsername(element) {
     // Check for author in query (supports both author=username and author:username)
     const authorMatch = decodedHref.match(/author[=:]([^+&\s]+)/);
     if (authorMatch && authorMatch[1]) {
-      return authorMatch[1];
+      const username = authorMatch[1];
+      // Only return if text matches the username
+      if (text.toLowerCase() === username.toLowerCase()) {
+        return username;
+      }
     }
     
     // Check for standard user path (e.g., /username or /username/repo)
@@ -119,7 +160,10 @@ function extractUsername(element) {
       ];
       
       if (!excludedPaths.includes(segment.toLowerCase())) {
-        return segment;
+        // Only return if text matches the username
+        if (text.toLowerCase() === segment.toLowerCase()) {
+          return segment;
+        }
       }
     }
   }
@@ -128,8 +172,16 @@ function extractUsername(element) {
   const dataUser = element.getAttribute('data-user');
   if (dataUser) return dataUser;
   
-  // Extract from text content (remove @ if present)
-  return text.startsWith('@') ? text.slice(1) : text;
+  // Only extract from text content for specific elements (user mentions, etc.)
+  // that don't have an href or where we couldn't extract a username from the href
+  if (element.classList.contains('user-mention') || 
+      element.classList.contains('assignee') ||
+      element.getAttribute('itemprop') === 'author') {
+    return text.startsWith('@') ? text.slice(1) : text;
+  }
+  
+  // No username found
+  return null;
 }
 
 // Fetch real name from GitHub API with rate limiting awareness
