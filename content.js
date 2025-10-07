@@ -48,12 +48,19 @@ function extractUsername(element) {
     return null;
   }
   
-  // Check for href attribute first
+  // Check for href attribute
   const href = element.getAttribute('href');
   if (href) {
-    const match = href.match(/^\/([^\/]+)(?:\/|$)/);
-    if (match && match[1] && !['orgs', 'organizations'].includes(match[1])) {
-      return match[1];
+    // Check for author query parameter first (e.g., /org/repo/commits?author=username)
+    const authorMatch = href.match(/[?&]author=([^&]+)/);
+    if (authorMatch && authorMatch[1]) {
+      return authorMatch[1];
+    }
+    
+    // Check for standard user path (e.g., /username or /username/repo)
+    const pathMatch = href.match(/^\/([^\/]+)(?:\/|$)/);
+    if (pathMatch && pathMatch[1] && !['orgs', 'organizations'].includes(pathMatch[1])) {
+      return pathMatch[1];
     }
   }
   
