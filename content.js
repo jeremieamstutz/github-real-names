@@ -259,23 +259,29 @@ async function fetchRealName(username) {
       }
       // Cache the username itself to avoid repeated failures
       nameCache.set(username, username);
-      await chrome.storage.local.set({ [username]: username });
+      await chrome.storage.local.set({ 
+        [username]: { name: username, timestamp: Date.now() }
+      });
       return username;
     }
     
     const data = await response.json();
     const realName = data.name || username;
     
-    // Cache both in memory and storage
+    // Cache both in memory and storage with timestamp
     nameCache.set(username, realName);
-    await chrome.storage.local.set({ [username]: realName });
+    await chrome.storage.local.set({ 
+      [username]: { name: realName, timestamp: Date.now() }
+    });
     
     return realName;
   } catch (error) {
     console.error(`[GitHub Real Names] Error fetching name:`, error);
     // Cache the username itself to avoid repeated failures
     nameCache.set(username, username);
-    await chrome.storage.local.set({ [username]: username });
+    await chrome.storage.local.set({ 
+      [username]: { name: username, timestamp: Date.now() }
+    });
     return username;
   }
 }
@@ -311,8 +317,8 @@ async function updateElement(element) {
   if (!realName) {
     // Check persistent storage first
     const stored = await chrome.storage.local.get(username);
-    if (stored[username]) {
-      realName = stored[username];
+    if (stored[username]?.name) {
+      realName = stored[username].name;
       nameCache.set(username, realName);
     } else {
       // Fetch from API
