@@ -27,21 +27,27 @@ function updateStatus(enabled) {
 toggleSwitch.addEventListener('change', async () => {
   const enabled = toggleSwitch.checked;
   
+  console.log('[GitHub Real Names] Toggle switched to:', enabled);
+  
   // Save to storage
   await chrome.storage.local.set({ enabled });
   
   // Send message to all GitHub tabs
   const tabs = await chrome.tabs.query({ url: 'https://github.com/*' });
   
+  console.log('[GitHub Real Names] Found tabs:', tabs.length);
+  
   for (const tab of tabs) {
     try {
-      await chrome.tabs.sendMessage(tab.id, {
+      console.log('[GitHub Real Names] Sending message to tab:', tab.id, tab.url);
+      const response = await chrome.tabs.sendMessage(tab.id, {
         action: 'toggle',
         enabled,
       });
+      console.log('[GitHub Real Names] Response from tab:', tab.id, response);
     } catch (error) {
       // Tab might not have content script loaded yet
-      console.log('Could not send message to tab:', tab.id);
+      console.error('[GitHub Real Names] Could not send message to tab:', tab.id, error);
     }
   }
   

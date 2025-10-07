@@ -202,10 +202,11 @@ function updateElementDisplay(element, username, realName) {
     // Show username
     const isMention = element.classList.contains('user-mention');
     element.textContent = isMention ? `@${username}` : username;
+    element.removeAttribute('title'); // Clear tooltip when showing username
   } else {
     // Show real name
     element.textContent = realName;
-    element.title = `@${username}`;
+    element.title = `@${username}`; // Show username in tooltip
   }
 }
 
@@ -213,22 +214,40 @@ function updateElementDisplay(element, username, realName) {
 async function processPage() {
   const elements = document.querySelectorAll(USERNAME_SELECTORS);
   
-  // Process in batches to avoid blocking
-  const batchSize = 20;
-  for (let i = 0; i < elements.length; i += batchSize) {
-    const batch = Array.from(elements).slice(i, i + batchSize);
-    await Promise.all(batch.map(el => updateElement(el)));
+  if (elements.length === 0) return;
+  
+  console.log(`[GitHub Real Names] Processing ${elements.length} elements`);
+  
+  // Process in larger batches and use requestIdleCallback for better performance
+  const batchSize = 50;
+  const elementsArray = Array.from(elements);
+  
+  for (let i = 0; i < elementsArray.length; i += batchSize) {
+    const batch = elementsArray.slice(i, i + batchSize);
     
-    // Yield to browser between batches
-    if (i + batchSize < elements.length) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+    // Process batch without awaiting - let them run in parallel
+    batch.forEach(el => updateElement(el));
+    
+    // Yield to browser between batches using requestIdleCallback if available
+    if (i + batchSize < elementsArray.length) {
+      await new Promise(resolve => {
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(resolve);
+        } else {
+          setTimeout(resolve, 0);
+        }
+      });
     }
   }
 }
 
 // Toggle between real names and usernames
 function toggleDisplay() {
-  document.querySelectorAll('[data-github-realnames-username]').forEach(element => {
+  // Update all processed elements
+  const processedElements = document.querySelectorAll('[data-github-realnames-username]');
+  console.log(`[GitHub Real Names] Toggling ${processedElements.length} elements. Enabled: ${isEnabled}`);
+  
+  processedElements.forEach(element => {
     const username = element.getAttribute('data-github-realnames-username');
     const realName = nameCache.get(username) || username;
     updateElementDisplay(element, username, realName);
@@ -237,32 +256,42 @@ function toggleDisplay() {
 
 // Set up MutationObserver to watch for new content
 function setupObserver() {
+  let debounceTimer = null;
+  let pendingElements = new Set();
+  
+  const processPendingElements = () => {
+    if (pendingElements.size === 0) return;
+    
+    const elements = Array.from(pendingElements);
+    pendingElements.clear();
+    
+    // Process elements asynchronously
+    elements.forEach(el => updateElement(el));
+  };
+  
   const observer = new MutationObserver((mutations) => {
     // Skip processing if extension is disabled
     if (!isEnabled) return;
-    
-    const addedElements = [];
     
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
           // Check if the node itself matches
           if (node.matches?.(USERNAME_SELECTORS)) {
-            addedElements.push(node);
+            pendingElements.add(node);
           }
           // Check for matching children
           const children = node.querySelectorAll?.(USERNAME_SELECTORS);
           if (children) {
-            addedElements.push(...children);
+            children.forEach(child => pendingElements.add(child));
           }
         }
       }
     }
     
-    // Process new elements
-    if (addedElements.length > 0) {
-      Promise.all(addedElements.map(el => updateElement(el)));
-    }
+    // Debounce processing to avoid excessive updates
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(processPendingElements, 100);
   });
   
   observer.observe(document.body, {
@@ -279,11 +308,15 @@ async function init() {
   const { enabled = true } = await chrome.storage.local.get('enabled');
   isEnabled = enabled;
   
-  // Process initial page content
-  await processPage();
-  
-  // Set up observer for dynamic content
+  // Set up observer for dynamic content immediately
   setupObserver();
+  
+  // Process initial page content after a short delay to not block page load
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(() => processPage(), { timeout: 2000 });
+  } else {
+    setTimeout(() => processPage(), 100);
+  }
   
   console.log('[GitHub Real Names] Extension initialized');
 }
@@ -291,6 +324,7 @@ async function init() {
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'toggle') {
+    console.log(`[GitHub Real Names] Received toggle message. New state: ${message.enabled}`);
     isEnabled = message.enabled;
     toggleDisplay();
     sendResponse({ success: true });
@@ -301,6 +335,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Start the extension
+console.log('[GitHub Real Names] Content script loaded');
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {
