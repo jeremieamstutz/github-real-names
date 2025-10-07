@@ -1,5 +1,23 @@
 'use strict';
 
+// Constants
+const MAX_USERNAME_LENGTH = 39; // GitHub's username length limit
+const BATCH_SIZE = 50;
+const DEBOUNCE_DELAY = 100;
+const IDLE_TIMEOUT = 2000;
+const INITIAL_DELAY = 100;
+
+const EXCLUDED_PATHS = new Set([
+  'orgs', 'organizations', 'packages', 'projects', 'teams',
+  'settings', 'notifications', 'issues', 'pulls',
+  'explore', 'topics', 'trending', 'collections', 'events', 'marketplace',
+  'sponsors', 'about', 'pricing', 'team', 'enterprise', 'customer-stories',
+  'security', 'features', 'codespaces', 'copilot', 'search', 'watching',
+  'stars', 'new', 'login', 'logout', 'signup', 'join', 'sessions'
+]);
+
+const NAVIGATION_PATTERNS = /^(open|view|edit|delete|close|save|cancel|submit|packages|settings|notifications|explore|search|issues|pull requests|discussions|actions|projects|wiki|security|insights|new|create|fork|star|watch|code|commit|branch|tag|release)($|\s)/i;
+
 // State management
 let isEnabled = true;
 const nameCache = new Map();
@@ -44,144 +62,149 @@ const USERNAME_SELECTORS = [
   'a[href^="/"]:not(:has(img)):not(:has(svg))',
 ].join(', ');
 
-// Extract username from various element types
-function extractUsername(element) {
-  // Skip elements that contain images (avatars)
-  if (element.querySelector('img, svg')) {
-    return null;
-  }
+// Helper functions
+function textMatchesUsername(text, username) {
+  return text.toLowerCase() === username.toLowerCase();
+}
+
+function isNavigationText(text) {
+  return NAVIGATION_PATTERNS.test(text) || /\s\d+$/.test(text);
+}
+
+function isExcludedPath(href) {
+  if (!href) return false;
   
-  // Skip elements that are mostly empty or just whitespace
-  const text = element.textContent?.trim();
-  if (!text) {
-    return null;
-  }
+  return href.startsWith('/orgs/') || 
+         href.startsWith('/organizations/') ||
+         href.includes('/packages') ||
+         href.includes('/projects') ||
+         href.includes('/teams');
+}
+
+function isButtonElement(element) {
+  return element.tagName === 'BUTTON' || 
+         element.getAttribute('role') === 'button' ||
+         element.classList.contains('btn') ||
+         element.classList.contains('Button') ||
+         element.closest('button');
+}
+
+function isCommitUrl(href) {
+  if (!href) return false;
+  return href.includes('/commit/') || 
+         href.includes('/commits/') || 
+         /\/[a-f0-9]{40}/.test(href);
+}
+
+function isValidUsernameElement(element, text, href) {
+  if (element.querySelector('img, svg')) return false;
+  if (!text) return false;
+  if (isExcludedPath(href)) return false;
+  if (isButtonElement(element)) return false;
+  if (text.length > MAX_USERNAME_LENGTH + 1) return false;
+  if (isNavigationText(text)) return false;
   
-  // Early check: Skip obvious non-user paths
-  const href = element.getAttribute('href');
-  if (href) {
-    // Skip organization, packages, and other system paths
-    if (href.startsWith('/orgs/') || 
-        href.startsWith('/organizations/') ||
-        href.includes('/packages') ||
-        href.includes('/projects') ||
-        href.includes('/teams')) {
-      return null;
+  return true;
+}
+
+function extractUsernameFromHref(href, text, element) {
+  if (!href) return null;
+  
+  if (isCommitUrl(href)) return null;
+  
+  const decodedHref = decodeURIComponent(href);
+  
+  // Check for author in query (supports both author=username and author:username)
+  const authorMatch = decodedHref.match(/author[=:]([^+&\s]+)/);
+  if (authorMatch && authorMatch[1]) {
+    const username = authorMatch[1];
+    if (textMatchesUsername(text, username)) {
+      return username;
     }
   }
   
-  // Skip buttons and button-like links
-  if (element.tagName === 'BUTTON' || 
-      element.getAttribute('role') === 'button' ||
-      element.classList.contains('btn') ||
-      element.classList.contains('Button') ||
-      element.closest('button')) {
-    return null;
-  }
-  
-  // Skip if text is too long to be a username (GitHub usernames max 39 chars)
-  if (text.length > 40) {
-    return null;
-  }
-  
-  // Skip common button/navigation text patterns (with or without trailing space/text)
-  const buttonPatterns = /^(open|view|edit|delete|close|save|cancel|submit|packages|settings|notifications|explore|search|issues|pull requests|discussions|actions|projects|wiki|security|insights|new|create|fork|star|watch|code|commit|branch|tag|release)($|\s)/i;
-  if (buttonPatterns.test(text)) {
-    return null;
-  }
-  
-  // Skip if text contains numbers and spaces (like "Packages 0")
-  if (/\s\d+$/.test(text)) {
-    return null;
-  }
-  
-  // Special case: Timeline items (commits in PRs, etc.)
-  const timelineItem = element.closest('.TimelineItem');
-  if (timelineItem) {
-    // href already declared above
+  // Check for standard user path (e.g., /username or /username/repo)
+  const pathMatch = href.match(/^\/([^\/\?#]+)(?:\/|$|\?|#)/);
+  if (pathMatch && pathMatch[1]) {
+    const segment = pathMatch[1];
     
-    // Skip commit messages (these point to commit SHAs)
-    if (href && (href.includes('/commit/') || href.includes('/commits/') || /\/[a-f0-9]{40}/.test(href))) {
-      return null;
-    }
-    
-    // For commit authors, try to match against the avatar
-    if (element.classList.contains('commit-author')) {
-      const avatarLink = timelineItem.querySelector('a[data-hovercard-type="user"]');
-      if (avatarLink) {
-        const avatarHref = avatarLink.getAttribute('href');
-        if (avatarHref) {
-          const match = avatarHref.match(/^\/([^\/\?#]+)$/);
-          if (match && match[1]) {
-            const username = match[1];
-            if (text.toLowerCase() === username.toLowerCase()) {
-              return username;
-            }
-          }
-        }
-      }
-    }
-    
-    // For other links (review requests, etc.), continue with normal processing
-  }
-  
-  // Check for href attribute (already declared above)
-  if (href) {
-    // Skip commit SHAs and other non-user URLs
-    if (href.includes('/commit/') || href.includes('/commits/') || /\/[a-f0-9]{40}$/.test(href)) {
-      return null;
-    }
-    
-    // Decode the URL to handle encoded characters
-    const decodedHref = decodeURIComponent(href);
-    
-    // Check for author in query (supports both author=username and author:username)
-    const authorMatch = decodedHref.match(/author[=:]([^+&\s]+)/);
-    if (authorMatch && authorMatch[1]) {
-      const username = authorMatch[1];
-      // Only return if text matches the username
-      if (text.toLowerCase() === username.toLowerCase()) {
-        return username;
-      }
-    }
-    
-    // Check for standard user path (e.g., /username or /username/repo)
-    const pathMatch = href.match(/^\/([^\/\?#]+)(?:\/|$|\?|#)/);
-    if (pathMatch && pathMatch[1]) {
-      const segment = pathMatch[1];
-      
-      // Exclude common GitHub system paths
-      const excludedPaths = [
-        'orgs', 'organizations', 'settings', 'notifications', 'issues', 'pulls',
-        'explore', 'topics', 'trending', 'collections', 'events', 'marketplace',
-        'sponsors', 'about', 'pricing', 'team', 'enterprise', 'customer-stories',
-        'security', 'features', 'codespaces', 'copilot', 'search', 'watching',
-        'stars', 'new', 'login', 'logout', 'signup', 'join', 'sessions'
-      ];
-      
-      if (!excludedPaths.includes(segment.toLowerCase())) {
-        // Only return if text matches the username
-        if (text.toLowerCase() === segment.toLowerCase()) {
-          return segment;
-        }
+    if (!EXCLUDED_PATHS.has(segment.toLowerCase())) {
+      if (textMatchesUsername(text, segment)) {
+        return segment;
       }
     }
   }
   
-  // Check for data attributes
+  return null;
+}
+
+function extractUsernameFromTimelineCommit(element, text, timelineItem) {
+  if (!element.classList.contains('commit-author')) {
+    return null;
+  }
+  
+  const avatarLink = timelineItem.querySelector('a[data-hovercard-type="user"]');
+  if (!avatarLink) return null;
+  
+  const avatarHref = avatarLink.getAttribute('href');
+  if (!avatarHref) return null;
+  
+  const match = avatarHref.match(/^\/([^\/\?#]+)$/);
+  if (!match || !match[1]) return null;
+  
+  const username = match[1];
+  if (textMatchesUsername(text, username)) {
+    return username;
+  }
+  
+  return null;
+}
+
+function extractUsernameFromAttributes(element, text) {
   const dataUser = element.getAttribute('data-user');
   if (dataUser) return dataUser;
   
-  // Only extract from text content for specific elements (user mentions, etc.)
-  // that don't have an href or where we couldn't extract a username from the href
+  // Only extract from text content for specific elements
   if (element.classList.contains('user-mention') || 
       element.classList.contains('assignee') ||
       element.getAttribute('itemprop') === 'author') {
     return text.startsWith('@') ? text.slice(1) : text;
   }
   
-  // No username found
   return null;
+}
+
+// Extract username from various element types
+function extractUsername(element) {
+  const text = element.textContent?.trim();
+  const href = element.getAttribute('href');
+  
+  // Early validation checks
+  if (!isValidUsernameElement(element, text, href)) {
+    return null;
+  }
+  
+  // Special case: Timeline items (commits in PRs, etc.)
+  const timelineItem = element.closest('.TimelineItem');
+  if (timelineItem) {
+    if (isCommitUrl(href)) {
+      return null;
+    }
+    
+    const timelineUsername = extractUsernameFromTimelineCommit(element, text, timelineItem);
+    if (timelineUsername) {
+      return timelineUsername;
+    }
+  }
+  
+  // Try to extract from href
+  const hrefUsername = extractUsernameFromHref(href, text, element);
+  if (hrefUsername) {
+    return hrefUsername;
+  }
+  
+  // Try to extract from data attributes or text content
+  return extractUsernameFromAttributes(element, text);
 }
 
 // Fetch real name from GitHub API with rate limiting awareness
@@ -194,10 +217,10 @@ async function fetchRealName(username) {
     const response = await fetch(`https://api.github.com/users/${username}`);
     
     if (!response.ok) {
-      // If rate limited or error, cache the username itself to avoid repeated failures
       if (response.status === 403 || response.status === 429) {
-        console.warn('[GitHub Real Names] Rate limited. Consider adding a GitHub token.');
+        console.warn(`[GitHub Real Names] Rate limited. Consider adding a GitHub token.`);
       }
+      // Cache the username itself to avoid repeated failures
       nameCache.set(username, username);
       await chrome.storage.local.set({ [username]: username });
       return username;
@@ -212,8 +235,10 @@ async function fetchRealName(username) {
     
     return realName;
   } catch (error) {
-    console.error('[GitHub Real Names] Error fetching name:', error);
+    console.error(`[GitHub Real Names] Error fetching name:`, error);
+    // Cache the username itself to avoid repeated failures
     nameCache.set(username, username);
+    await chrome.storage.local.set({ [username]: username });
     return username;
   }
 }
@@ -264,16 +289,18 @@ async function updateElement(element) {
 
 // Update the visual display of an element
 function updateElementDisplay(element, username, realName) {
+  const isMention = element.classList.contains('user-mention');
+  
+  // Show username if disabled or no real name available
   if (!isEnabled || realName === username) {
-    // Show username
-    const isMention = element.classList.contains('user-mention');
     element.textContent = isMention ? `@${username}` : username;
-    element.removeAttribute('title'); // Clear tooltip when showing username
-  } else {
-    // Show real name
-    element.textContent = realName;
-    element.title = `@${username}`; // Show username in tooltip
+    element.removeAttribute('title');
+    return;
   }
+  
+  // Show real name with username in tooltip
+  element.textContent = realName;
+  element.title = `@${username}`;
 }
 
 // Process all username elements on the page
@@ -284,18 +311,16 @@ async function processPage() {
   
   console.log(`[GitHub Real Names] Processing ${elements.length} elements`);
   
-  // Process in larger batches and use requestIdleCallback for better performance
-  const batchSize = 50;
   const elementsArray = Array.from(elements);
   
-  for (let i = 0; i < elementsArray.length; i += batchSize) {
-    const batch = elementsArray.slice(i, i + batchSize);
+  for (let i = 0; i < elementsArray.length; i += BATCH_SIZE) {
+    const batch = elementsArray.slice(i, i + BATCH_SIZE);
     
     // Process batch without awaiting - let them run in parallel
     batch.forEach(el => updateElement(el));
     
     // Yield to browser between batches using requestIdleCallback if available
-    if (i + batchSize < elementsArray.length) {
+    if (i + BATCH_SIZE < elementsArray.length) {
       await new Promise(resolve => {
         if ('requestIdleCallback' in window) {
           requestIdleCallback(resolve);
@@ -309,11 +334,10 @@ async function processPage() {
 
 // Toggle between real names and usernames
 function toggleDisplay() {
-  // Update all processed elements
-  const processedElements = document.querySelectorAll('[data-github-realnames-username]');
-  console.log(`[GitHub Real Names] Toggling ${processedElements.length} elements. Enabled: ${isEnabled}`);
+  const elementsToToggle = document.querySelectorAll('[data-github-realnames-username]');
+  console.log(`[GitHub Real Names] Toggling ${elementsToToggle.length} elements. Enabled: ${isEnabled}`);
   
-  processedElements.forEach(element => {
+  elementsToToggle.forEach(element => {
     const username = element.getAttribute('data-github-realnames-username');
     const realName = nameCache.get(username) || username;
     updateElementDisplay(element, username, realName);
@@ -357,7 +381,7 @@ function setupObserver() {
     
     // Debounce processing to avoid excessive updates
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(processPendingElements, 100);
+    debounceTimer = setTimeout(processPendingElements, DEBOUNCE_DELAY);
   });
   
   observer.observe(document.body, {
@@ -379,9 +403,9 @@ async function init() {
   
   // Process initial page content after a short delay to not block page load
   if ('requestIdleCallback' in window) {
-    requestIdleCallback(() => processPage(), { timeout: 2000 });
+    requestIdleCallback(() => processPage(), { timeout: IDLE_TIMEOUT });
   } else {
-    setTimeout(() => processPage(), 100);
+    setTimeout(() => processPage(), INITIAL_DELAY);
   }
   
   console.log('[GitHub Real Names] Extension initialized');
