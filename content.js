@@ -25,8 +25,9 @@ const USERNAME_SELECTORS = [
   // Profile links
   'a[itemprop="author"]',
   
-  // Timeline items
+  // Timeline items - author names and commit links
   'a.Link--primary[href^="/"][href*="/commits?author="]',
+  '.TimelineItem .commit-author',
   
   // Specific text-only username links
   'a[data-hovercard-type="user"]:not(:has(img)):not(:has(svg))',
@@ -48,9 +49,38 @@ function extractUsername(element) {
     return null;
   }
   
+  // Special case: Timeline items (commits in PRs, etc.)
+  const timelineItem = element.closest('.TimelineItem');
+  if (timelineItem) {
+    // Find the username from the avatar in this timeline item
+    const avatarLink = timelineItem.querySelector('a[data-hovercard-type="user"]');
+    if (avatarLink) {
+      const avatarHref = avatarLink.getAttribute('href');
+      if (avatarHref) {
+        const match = avatarHref.match(/^\/([^\/\?#]+)$/);
+        if (match && match[1]) {
+          const username = match[1];
+          
+          // If the element's text matches the username, transform it
+          if (text.toLowerCase() === username.toLowerCase()) {
+            return username;
+          }
+        }
+      }
+    }
+    
+    // Skip any other links in TimelineItem (commit messages, etc.)
+    return null;
+  }
+  
   // Check for href attribute
   const href = element.getAttribute('href');
   if (href) {
+    // Skip commit SHAs and other non-user URLs
+    if (href.includes('/commit/') || href.includes('/commits/') || /\/[a-f0-9]{40}$/.test(href)) {
+      return null;
+    }
+    
     // Decode the URL to handle encoded characters
     const decodedHref = decodeURIComponent(href);
     
@@ -61,9 +91,22 @@ function extractUsername(element) {
     }
     
     // Check for standard user path (e.g., /username or /username/repo)
-    const pathMatch = href.match(/^\/([^\/]+)(?:\/|$)/);
-    if (pathMatch && pathMatch[1] && !['orgs', 'organizations'].includes(pathMatch[1])) {
-      return pathMatch[1];
+    const pathMatch = href.match(/^\/([^\/\?#]+)(?:\/|$|\?|#)/);
+    if (pathMatch && pathMatch[1]) {
+      const segment = pathMatch[1];
+      
+      // Exclude common GitHub system paths
+      const excludedPaths = [
+        'orgs', 'organizations', 'settings', 'notifications', 'issues', 'pulls',
+        'explore', 'topics', 'trending', 'collections', 'events', 'marketplace',
+        'sponsors', 'about', 'pricing', 'team', 'enterprise', 'customer-stories',
+        'security', 'features', 'codespaces', 'copilot', 'search', 'watching',
+        'stars', 'new', 'login', 'logout', 'signup', 'join', 'sessions'
+      ];
+      
+      if (!excludedPaths.includes(segment.toLowerCase())) {
+        return segment;
+      }
     }
   }
   
