@@ -17,25 +17,12 @@ const resetTime = document.getElementById('resetTime');
 async function loadState() {
   const { enabled = true } = await chrome.storage.local.get('enabled');
   toggleSwitch.checked = enabled;
-  updateStatus(enabled);
   
   // Load token status
   await loadTokenStatus();
   
   // Load rate limit info
   await loadRateLimitInfo();
-}
-
-// Update status display
-function updateStatus(enabled) {
-  const statusClass = enabled ? 'enabled' : 'disabled';
-  const statusText = enabled ? '✓ Active' : '○ Inactive';
-  
-  statusContainer.innerHTML = `
-    <div class="status ${statusClass}">
-      ${statusText}
-    </div>
-  `;
 }
 
 // Load token status
@@ -125,8 +112,6 @@ toggleSwitch.addEventListener('change', async () => {
       console.error('[GitHub Real Names] Could not send message to tab:', tab.id, error);
     }
   }
-  
-  updateStatus(enabled);
 });
 
 // Refresh all names by clearing cache and re-fetching
