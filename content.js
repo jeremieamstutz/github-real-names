@@ -207,8 +207,10 @@ function extractUsername(element) {
 }
 
 // Fetch real name from GitHub API with rate limiting awareness
-async function fetchRealName(username) {
-  if (!username || nameCache.has(username)) {
+async function fetchRealName(username, skipCache = false) {
+  if (!username) return null;
+  
+  if (!skipCache && nameCache.has(username)) {
     return nameCache.get(username);
   }
   
@@ -285,6 +287,23 @@ async function fetchRealName(username) {
   }
 }
 
+// Stale-while-revalidate: Check if cache entry should be revalidated
+// Revalidate entries older than 24 hours
+const REVALIDATE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+async function revalidateIfStale(username, timestamp) {
+  const now = Date.now();
+  const age = now - timestamp;
+  
+  // If entry is older than 24 hours, revalidate in background
+  if (age > REVALIDATE_AGE_MS) {
+    // Fire and forget - don't await
+    fetchRealName(username, true).catch(err => {
+      console.error(`[GitHub Real Names] Background revalidation failed for ${username}:`, err);
+    });
+  }
+}
+
 // Update a single element with real name
 async function updateElement(element) {
   if (processedElements.has(element)) {
@@ -316,6 +335,12 @@ async function updateElement(element) {
   if (realName) {
     // Cache hit - update immediately (no delay)
     updateElementDisplay(element, username, realName);
+    
+    // Check if we should revalidate in background (stale-while-revalidate)
+    const stored = await chrome.storage.local.get(username);
+    if (stored[username]?.timestamp) {
+      revalidateIfStale(username, stored[username].timestamp);
+    }
   } else {
     // Cache miss - show username temporarily, then fetch
     updateElementDisplay(element, username, username);
@@ -326,6 +351,11 @@ async function updateElement(element) {
       realName = stored[username].name;
       nameCache.set(username, realName);
       updateElementDisplay(element, username, realName);
+      
+      // Revalidate if stale
+      if (stored[username].timestamp) {
+        revalidateIfStale(username, stored[username].timestamp);
+      }
     } else {
       // Fetch from API
       realName = await fetchRealName(username);
