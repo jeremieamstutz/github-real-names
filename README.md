@@ -39,7 +39,7 @@ A modern Chrome extension that replaces GitHub usernames with real names (displa
 
 1. Clone or download this repository:
    ```bash
-   git clone https://github.com/yourusername/github-real-names.git
+   git clone https://github.com/jeremieamstutz/github-real-names.git
    cd github-real-names
    ```
 
