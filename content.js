@@ -12,7 +12,7 @@ const EXCLUDED_PATHS = new Set([
   'explore', 'topics', 'trending', 'collections', 'events', 'marketplace',
   'sponsors', 'about', 'pricing', 'team', 'enterprise', 'customer-stories',
   'security', 'features', 'codespaces', 'copilot', 'search', 'watching',
-  'stars', 'new', 'login', 'logout', 'signup', 'join', 'sessions'
+  'stars', 'new', 'login', 'logout', 'signup', 'join', 'sessions', 'community'
 ]);
 
 const NAVIGATION_PATTERNS = /^(open|view|edit|delete|close|save|cancel|submit|packages|settings|notifications|explore|search|issues|pull requests|discussions|actions|projects|wiki|security|insights|new|create|fork|star|watch|code|commit|branch|tag|release)($|\s)/i;
@@ -411,15 +411,18 @@ function updateElementDisplay(element, username, realName) {
     return;
   }
   
-  // Update each text node that contains the username
+  // Update each text node that contains the username or real name
   textNodes.forEach(textNode => {
     const text = textNode.textContent.trim();
     const textLower = text.toLowerCase();
     const usernameLower = username.toLowerCase();
+    const realNameLower = realName.toLowerCase();
     
-    // Check if this text node contains the username (with or without @)
+    // Check if this text node contains the username OR real name (with or without @)
+    // We need to check both because we might be toggling from real name back to username
     const isMatch = textLower === usernameLower || 
                     textLower === `@${usernameLower}` ||
+                    textLower === realNameLower ||
                     (isMention && textLower === usernameLower);
     
     if (isMatch) {
@@ -471,7 +474,8 @@ async function processPage() {
 }
 
 // Toggle between real names and usernames
-function toggleDisplay() {
+async function toggleDisplay() {
+  // First, update all already-tracked elements
   const elementsToToggle = document.querySelectorAll('[data-github-realnames-username]');
   console.log(`[GitHub Real Names] Toggling ${elementsToToggle.length} elements. Enabled: ${isEnabled}`);
   
@@ -480,6 +484,10 @@ function toggleDisplay() {
     const realName = nameCache.get(username) || username;
     updateElementDisplay(element, username, realName);
   });
+  
+  // Then re-process the entire page to catch any elements that weren't tracked
+  // (This ensures any dynamically loaded content is also toggled)
+  await processPage();
 }
 
 // Set up MutationObserver to watch for new content
@@ -493,14 +501,12 @@ function setupObserver() {
     const elements = Array.from(pendingElements);
     pendingElements.clear();
     
-    // Process elements asynchronously
+    // Process elements asynchronously - they will respect isEnabled state
     elements.forEach(el => updateElement(el));
   };
   
   const observer = new MutationObserver((mutations) => {
-    // Skip processing if extension is disabled
-    if (!isEnabled) return;
-    
+    // Always track elements, but updateElement() will respect isEnabled state
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
@@ -587,8 +593,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'toggle') {
     console.log(`[GitHub Real Names] Received toggle message. New state: ${message.enabled}`);
     isEnabled = message.enabled;
-    toggleDisplay();
-    sendResponse({ success: true });
+    // Call toggleDisplay and send response when done
+    toggleDisplay().then(() => {
+      sendResponse({ success: true });
+    }).catch((error) => {
+      console.error('[GitHub Real Names] Error toggling display:', error);
+      sendResponse({ success: false, error: error.message });
+    });
+    return true; // Keep message channel open for async response
   } else if (message.action === 'getState') {
     sendResponse({ enabled: isEnabled });
   } else if (message.action === 'refreshCache') {
@@ -598,10 +610,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Clear processed elements to re-process everything
     processedElements = new WeakSet();
     // Re-process the page
-    processPage();
-    sendResponse({ success: true });
+    processPage().then(() => {
+      sendResponse({ success: true });
+    });
+    return true; // Keep message channel open for async response
   }
-  return true;
+  return false;
 });
 
 // Start the extension immediately to pre-load cache ASAP
