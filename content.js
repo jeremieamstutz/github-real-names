@@ -23,42 +23,25 @@ const nameCache = new Map();
 let processedElements = new WeakSet();
 
 // Selectors for different types of username elements on GitHub
-// Note: We filter out elements with images in extractUsername()
+// We use simple selectors and filter out images in isValidUsernameElement()
 const USERNAME_SELECTORS = [
-  // Authors and contributors (text links only)
-  'a.author:not([data-hovercard-type="organization"])',
-  'a.commit-author',
+  // User-specific links (most reliable)
+  'a[data-hovercard-type="user"]',
+  'a[data-hovercard-url*="/users/"]',
   
   // User mentions
   'a.user-mention',
   
-  // Issue/PR creators
+  // Common author/contributor classes
+  'a.author',
+  'a.commit-author',
   'a.author-link',
-  
-  // Assignees and reviewers (text only)
-  'a.assignee .css-truncate-target',
-  'span.assignee',
   
   // Profile links
   'a[itemprop="author"]',
   
-  // Timeline items - author names and commit links
-  'a.Link--primary[href^="/"][href*="/commits?author="]',
-  '.TimelineItem .commit-author',
-  
-  // Review requests and mentions in timeline
-  '.TimelineItem a.Link--primary:not(:has(img)):not(:has(svg))',
-  '.TimelineItem a.Link--secondary:not(:has(img)):not(:has(svg))',
-  '.TimelineItem a.author:not(:has(img)):not(:has(svg))',
-  
-  // Specific text-only username links
-  'a[data-hovercard-type="user"]:not(:has(img)):not(:has(svg))',
-  'a[data-hovercard-url*="/users/"]:not(:has(img)):not(:has(svg))',
-  '.TimelineItem-body a[data-hovercard-type="user"]:not(:has(img)):not(:has(svg))',
-  '.BorderGrid-cell a[data-hovercard-type="user"]:not(:has(img)):not(:has(svg))',
-  
-  // Simple profile links (e.g., /username) - filtered by extractUsername to avoid false positives
-  'a[href^="/"]:not(:has(img)):not(:has(svg))',
+  // General GitHub user links - will be filtered by validation logic
+  'a[href^="/"]',
 ].join(', ');
 
 // Helper functions
@@ -96,12 +79,28 @@ function isCommitUrl(href) {
 }
 
 function isValidUsernameElement(element, text, href) {
-  if (element.querySelector('img, svg')) return false;
+  // Skip if element itself is an image or SVG
+  if (element.tagName === 'IMG' || element.tagName === 'SVG') return false;
+  
+  // Skip if no text content
   if (!text) return false;
+  
+  // Skip excluded paths (orgs, packages, etc.)
   if (isExcludedPath(href)) return false;
+  
+  // Skip buttons and interactive elements
   if (isButtonElement(element)) return false;
+  
+  // Skip if text is too long to be a username
   if (text.length > MAX_USERNAME_LENGTH + 1) return false;
+  
+  // Skip navigation text
   if (isNavigationText(text)) return false;
+  
+  // Skip if element has an avatar or profile image class (the container itself)
+  if (element.classList.contains('avatar') || 
+      element.classList.contains('avatar-user') ||
+      element.closest('.avatar, .avatar-user')) return false;
   
   return true;
 }
@@ -364,20 +363,82 @@ async function updateElement(element) {
   }
 }
 
-// Update the visual display of an element
+// Find and return all text nodes in an element (excluding nested images/svgs)
+function getTextNodes(element) {
+  const textNodes = [];
+  const walker = document.createTreeWalker(
+    element,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode: function(node) {
+        // Skip empty text nodes
+        if (!node.textContent.trim()) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        // Skip text nodes inside SVG elements
+        if (node.parentElement?.closest('svg')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    }
+  );
+  
+  let node;
+  while (node = walker.nextNode()) {
+    textNodes.push(node);
+  }
+  
+  return textNodes;
+}
+
+// Update the visual display of an element by replacing text nodes only
 function updateElementDisplay(element, username, realName) {
   const isMention = element.classList.contains('user-mention');
   
-  // Show username if disabled or no real name available
-  if (!isEnabled || realName === username) {
-    element.textContent = isMention ? `@${username}` : username;
-    element.removeAttribute('title');
+  // Find all text nodes in the element
+  const textNodes = getTextNodes(element);
+  
+  if (textNodes.length === 0) {
+    // Fallback: if no text nodes found, update the whole element
+    if (!isEnabled || realName === username) {
+      element.textContent = isMention ? `@${username}` : username;
+      element.removeAttribute('title');
+    } else {
+      element.textContent = realName;
+      element.title = `@${username}`;
+    }
     return;
   }
   
-  // Show real name with username in tooltip
-  element.textContent = realName;
-  element.title = `@${username}`;
+  // Update each text node that contains the username
+  textNodes.forEach(textNode => {
+    const text = textNode.textContent.trim();
+    const textLower = text.toLowerCase();
+    const usernameLower = username.toLowerCase();
+    
+    // Check if this text node contains the username (with or without @)
+    const isMatch = textLower === usernameLower || 
+                    textLower === `@${usernameLower}` ||
+                    (isMention && textLower === usernameLower);
+    
+    if (isMatch) {
+      // Preserve leading/trailing whitespace
+      const leadingSpace = textNode.textContent.match(/^\s*/)[0];
+      const trailingSpace = textNode.textContent.match(/\s*$/)[0];
+      
+      if (!isEnabled || realName === username) {
+        // Show username
+        const displayText = isMention ? `@${username}` : username;
+        textNode.textContent = leadingSpace + displayText + trailingSpace;
+        element.removeAttribute('title');
+      } else {
+        // Show real name with username in tooltip
+        textNode.textContent = leadingSpace + realName + trailingSpace;
+        element.title = `@${username}`;
+      }
+    }
+  });
 }
 
 // Process all username elements on the page
